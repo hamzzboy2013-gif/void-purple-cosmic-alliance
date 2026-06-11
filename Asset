@@ -1,0 +1,24 @@
+
+## Quick Start
+
+1. Clone the repository
+2. Open in Unity 2022.3 LTS or higher
+3. Load the `MainScene` from `Assets/Scenes/`
+4. Press Play
+
+## Core Systems
+
+- **Combat Engine** - Real-time anime-style action
+- **Progression** - Player ranks, ally leveling, transformations
+- **Ally System** - Recruit and upgrade warriors
+- **Gear System** - Weapons, artifacts, relics
+- **Raid System** - Multiplayer boss battles
+- **Mobile Controls** - Optimized joystick + buttons
+
+## Development Status
+
+**v0.1** - Core gameplay loop (1 map, 1 player, 3 allies, combat, enemy AI)
+
+## License
+
+MIT License - See LICENSE.md
