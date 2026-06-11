@@ -1,0 +1,107 @@
+# This file is used by Git to determine which files and folders to ignore in a repository
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+
+# Diagnostic reports (https://nodejs.org/api/report.html)
+report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage directory used by tools like istanbul
+coverage
+*.lcov
+.nyc_output
+
+# Grunt intermediate storage (https://gruntjs.com/creating-plugins-and-storing-gruntjs-files)
+.grunt
+
+# Bower dependency directory (https://bower.io/)
+bower_components
+
+# node-waf configuration
+.lock-wscript
+
+# Compiled binary addons (https://nodejs.org/api/addons.html)
+build/Release
+
+# Dependency directories
+node_modules/
+jspm_packages/
+
+# Snowpack
+snow/
+
+# PEP 582; used by e.g. github.com/David-OConnor/pyflow
+__pypackages__/
+
+# Celery stuff
+celerybeat-schedule
+celerybeat.pid
+
+# SageMath parsed files
+*.sage.py
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Spyder project settings
+.spyderproject
+.spyproject
+
+# Rope project settings
+.ropeproject
+
+# mkdocs documentation
+/site
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre type checker
+.pyre/
+
+# Unity generated
+[Ll]ibrary/
+[Tt]emp/
+[Oo]bj/
+[Bb]uild/
+[Bb]uilds/
+[Ll]ogs/
+UserSettings/
+Assets/AssetStoreTools*
+*.booproj
+*.pidb
+*.suo
+*.user
+*.userprefs
+*.unityproj
+*.sln
+*.sln.meta
+*.unitypackage
+*.log
+.DS_Store
+Distributions/
+FrameworkVersion.txt
+FrameworkVersion.txt.meta
+ProjectSettings/Packages/manifest.json
+ProjectSettings/ProjectVersion.txt
+Packages/manifest.json
+Packages/packages-lock.json
