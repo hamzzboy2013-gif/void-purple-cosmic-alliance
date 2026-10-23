@@ -1,5 +1,6 @@
--- SHINOBI: EMBER LEGACY — ROBLOX STUDIO INSTALLER
--- Open a NEW Baseplate in Studio. Open View > Command Bar.
+-- SHINOBI: EMBER LEGACY v2 — ROBLOX STUDIO INSTALLER / UPDATER
+-- Open your previously installed Shinobi place, or a new Baseplate. STOP Play mode.
+-- Save your place first, then open the Command Bar from Studio's View or Window menu.
 -- Copy this ENTIRE file, paste into the Command Bar, and press Enter.
 -- Wait for the success message, then press Play. Do not paste into a normal Script.
 -- This installer includes every game script; no downloads or HTTP settings are needed.
@@ -11,15 +12,22 @@ local StarterPlayer = game:GetService("StarterPlayer")
 local ServerStorage = game:GetService("ServerStorage")
 local starterScripts = StarterPlayer:FindFirstChildOfClass("StarterPlayerScripts")
 assert(starterScripts, "StarterPlayerScripts is missing. Open a fresh Baseplate and try again.")
+local previousRoots = {}
 for _, target in {
     { ReplicatedStorage, "Shinobi" },
     { ServerScriptService, "ShinobiServer" },
     { starterScripts, "ShinobiClient" },
-    { ServerStorage, "ShinobiOriginalTemplate" },
-    { workspace, "ShinobiWorld" },
 } do
-    assert(not target[1]:FindFirstChild(target[2]), "Shinobi is already installed or its folder name is in use. Open a NEW Baseplate to install another copy.")
+    local previous = target[1]:FindFirstChild(target[2])
+    if previous then
+        assert(previous:IsA("Folder") and previous:GetAttribute("ShinobiInstaller") == true,
+            "An unrecognized " .. target[2] .. " folder exists. Open a NEW Baseplate to install safely.")
+        table.insert(previousRoots, previous)
+    end
 end
+local previousWorld = workspace:FindFirstChild("ShinobiWorld")
+assert(not previousWorld or previousWorld:GetAttribute("ShinobiGenerated") == true or #previousRoots == 3,
+    "An unrelated ShinobiWorld folder exists. Open a NEW Baseplate to install safely.")
 
 local scripts = {
 { Destination = "shared", ClassName = "ModuleScript", Name = "Config", Source = [====[
@@ -214,6 +222,7 @@ function CombatService.new(enemies, players, remotes)
 		_players = players,
 		_remotes = remotes,
 		_clones = {},
+		_pending = {},
 		_destroyed = false,
 	}, CombatService)
 end
@@ -247,6 +256,28 @@ function CombatService:_dash(character, root, direction, distance)
 	self:_effect("Dash", origin, root.Position, { Duration = 0.25 })
 end
 
+function CombatService:_impact(player, attack, root)
+	local action = Config.Actions[attack.Action]
+	local origin = root.Position
+	local forward = directionTo(root, attack.Aim, true)
+	if attack.Action == "Strike" then
+		local center = origin + forward * math.min(action.Range, 5)
+		self._enemies:DamageInRadius(player, center, action.Radius, action.Damage)
+		self:_effect("Strike", origin, center, { Radius = action.Radius, Duration = 0.2 })
+	elseif attack.Action == "Rasengan" then
+		local center = origin + forward * math.min(action.Range, 6)
+		self._enemies:DamageInRadius(player, center, action.Radius, action.Damage)
+		self:_effect("Rasengan", center, nil, { Radius = action.Radius, Duration = 0.65 })
+	elseif attack.Action == "Fireball" then
+		local fireOrigin = origin + Vector3.new(0, 1, 0)
+		local direction = directionTo(root, attack.Aim, false)
+		local hit = self._enemies:DamageRay(player, fireOrigin, direction, action.Range, action.Radius, action.Damage)
+		self:_effect("Fireball", fireOrigin, hit or fireOrigin + direction * action.Range, {
+			Radius = action.Radius, Duration = 0.45,
+		})
+	end
+end
+
 function CombatService:HandleAction(player, actionId, aimPosition)
 	if self._destroyed or type(actionId) ~= "string" or #actionId > 32 then
 		return
@@ -276,24 +307,28 @@ function CombatService:HandleAction(player, actionId, aimPosition)
 		return
 	end
 	entry.ChargingUntil = nil
+	-- A dodge or a new jutsu can interrupt the wind-up of the previous action.
+	self._pending[player] = nil
 	local forward = directionTo(root, aimPosition, true)
 	local origin = root.Position
+	local combo = 1
+	if actionId ~= "Charge" then
+		root.CFrame = CFrame.lookAt(origin, origin + forward)
+	end
 	if actionId == "Strike" then
-		local center = origin + forward * math.min(action.Range, 5)
-		self._enemies:DamageInRadius(player, center, action.Radius, action.Damage)
-		self:_effect("Strike", origin, center, { Radius = action.Radius, Duration = 0.2 })
-	elseif actionId == "Rasengan" then
-		local center = origin + forward * math.min(action.Range, 6)
-		self._enemies:DamageInRadius(player, center, action.Radius, action.Damage)
-		self:_effect("Rasengan", center, nil, { Radius = action.Radius, Duration = 0.65 })
-	elseif actionId == "Fireball" then
-		local fireOrigin = origin + Vector3.new(0, 1, 0)
-		local direction = directionTo(root, aimPosition, false)
-		local hit = self._enemies:DamageRay(player, fireOrigin, direction, action.Range, action.Radius, action.Damage)
-		self:_effect("Fireball", fireOrigin, hit or fireOrigin + direction * action.Range, {
-			Radius = action.Radius,
-			Duration = 0.45,
-		})
+		combo = if now - (entry.LastStrikeAt or -math.huge) <= 1.1 then (entry.StrikeCombo or 0) % 3 + 1 else 1
+		entry.LastStrikeAt = now
+		entry.StrikeCombo = combo
+	end
+	local durations = { Strike = if combo == 3 then 0.58 else 0.42, Rasengan = 0.6,
+		Fireball = 0.65, ShadowClone = 0.75, Dash = 0.25, Charge = Config.ChargeDuration }
+	self:_effect("CombatAnimation", origin, nil, {
+		Actor = character, Action = actionId, Combo = combo,
+		StartedAt = now, Duration = durations[actionId],
+	})
+	if actionId == "Strike" or actionId == "Rasengan" or actionId == "Fireball" then
+		local delay = if actionId == "Fireball" then 0.32 elseif actionId == "Rasengan" or combo == 3 then 0.24 else 0.15
+		self._pending[player] = { Character = character, Action = actionId, Aim = aimPosition, At = now + delay }
 	elseif actionId == "ShadowClone" then
 		-- One clone per owner; pulses are processed in Step and die with the character.
 		self._clones[player] = {
@@ -323,6 +358,16 @@ function CombatService:Step(_dt)
 		return
 	end
 	local now = workspace:GetServerTimeNow()
+	for player, attack in pairs(self._pending) do
+		local character, _, root = characterParts(player)
+		local entry = self._players:Get(player)
+		if player.Parent ~= Players or character ~= attack.Character or not entry or not entry.Ready then
+			self._pending[player] = nil
+		elseif now >= attack.At then
+			self._pending[player] = nil -- Remove before applying damage; each impact resolves once.
+			self:_impact(player, attack, root)
+		end
+	end
 	for player, clone in pairs(self._clones) do
 		local character, _, root = characterParts(player)
 		if player.Parent ~= Players or character ~= clone.Character or now >= clone.Expires then
@@ -343,6 +388,7 @@ end
 function CombatService:Destroy()
 	self._destroyed = true
 	table.clear(self._clones)
+	table.clear(self._pending)
 end
 
 return CombatService
@@ -400,6 +446,7 @@ local function part(model, name, size, offset, color, material)
 	object.Color = color
 	object.Material = material or Enum.Material.SmoothPlastic
 	object.Anchored = true
+	object.Massless = true
 	object.CanCollide = false
 	object.CanTouch = false
 	object.CanQuery = false
@@ -408,6 +455,28 @@ local function part(model, name, size, offset, color, material)
 	object.BottomSurface = Enum.SurfaceType.Smooth
 	object.Parent = model
 	return object
+end
+
+local function joint(name, parent, child, pivot, scale)
+	-- Neutral C0/C1 frames use the same axes as the rig, so procedural poses can
+	-- rotate around the visible shoulders/hips without asset-specific corrections.
+	local motor = Instance.new("Motor6D")
+	motor.Name = name
+	motor.Part0 = parent
+	motor.Part1 = child
+	local worldPivot = CFrame.new(pivot * scale)
+	motor.C0 = parent.CFrame:ToObjectSpace(worldPivot)
+	motor.C1 = child.CFrame:ToObjectSpace(worldPivot)
+	motor.Parent = parent
+	return motor
+end
+
+local function attach(parent, decoration)
+	local weld = Instance.new("WeldConstraint")
+	weld.Name = decoration.Name .. "Attachment"
+	weld.Part0 = parent
+	weld.Part1 = decoration
+	weld.Parent = decoration
 end
 
 function EnemyService.new(spawns, onKill, effectRemote)
@@ -459,29 +528,44 @@ function EnemyService:_spawn(enemy)
 	local model = Instance.new("Model")
 	model.Name = if dummy then "Training Dummy" elseif boss then "Rogue Jonin" else "Rogue Shinobi"
 	model:SetAttribute("EnemyKind", enemy.Kind)
+	model:SetAttribute("ShinobiRigVersion", 2)
 	local primary = part(model, "HumanoidRootPart", Vector3.new(2, 2, 1) * scale, ZERO, Color3.new())
 	primary.Transparency = 1
 	local cloth = if dummy then Color3.fromRGB(151, 105, 64)
 		elseif boss then Color3.fromRGB(73, 36, 100) else Color3.fromRGB(40, 52, 66)
 	local trim = if boss then Color3.fromRGB(255, 104, 72) else Color3.fromRGB(184, 57, 53)
-	part(model, "Torso", Vector3.new(2, 2, 1) * scale, ZERO, cloth)
+	local torso = part(model, "Torso", Vector3.new(2, 2, 1) * scale, ZERO, cloth)
 	local head = part(model, "Head", Vector3.new(1.45, 1.3, 1.2) * scale,
 		Vector3.new(0, 1.65, 0) * scale, if dummy then cloth else Color3.fromRGB(214, 170, 139))
-	part(model, "LeftArm", Vector3.new(0.7, 2, 0.8) * scale,
+	local leftArm = part(model, "Left Arm", Vector3.new(0.7, 2, 0.8) * scale,
 		Vector3.new(-1.4, 0, 0) * scale, cloth)
-	part(model, "RightArm", Vector3.new(0.7, 2, 0.8) * scale,
+	local rightArm = part(model, "Right Arm", Vector3.new(0.7, 2, 0.8) * scale,
 		Vector3.new(1.4, 0, 0) * scale, cloth)
-	part(model, "LeftLeg", Vector3.new(0.85, 2, 0.85) * scale,
+	local leftLeg = part(model, "Left Leg", Vector3.new(0.85, 2, 0.85) * scale,
 		Vector3.new(-0.55, -2, 0) * scale, cloth)
-	part(model, "RightLeg", Vector3.new(0.85, 2, 0.85) * scale,
+	local rightLeg = part(model, "Right Leg", Vector3.new(0.85, 2, 0.85) * scale,
 		Vector3.new(0.55, -2, 0) * scale, cloth)
-	part(model, "Headband", Vector3.new(1.5, 0.3, 0.1) * scale,
-		Vector3.new(0, 1.95, -0.64) * scale, Color3.fromRGB(164, 182, 197), Enum.Material.Metal)
-	part(model, "Sash", Vector3.new(2.05, 0.35, 1.05) * scale,
-		Vector3.new(0, -0.65, 0) * scale, trim)
+	joint("RootJoint", primary, torso, ZERO, scale)
+	joint("Neck", torso, head, Vector3.new(0, 1, 0), scale)
+	joint("Left Shoulder", torso, leftArm, Vector3.new(-1.1, 0.75, 0), scale)
+	joint("Right Shoulder", torso, rightArm, Vector3.new(1.1, 0.75, 0), scale)
+	joint("Left Hip", torso, leftLeg, Vector3.new(-0.55, -1, 0), scale)
+	joint("Right Hip", torso, rightLeg, Vector3.new(0.55, -1, 0), scale)
+	attach(head, part(model, "Headband", Vector3.new(1.5, 0.3, 0.1) * scale,
+		Vector3.new(0, 1.95, -0.64) * scale, Color3.fromRGB(164, 182, 197), Enum.Material.Metal))
+	attach(torso, part(model, "Sash", Vector3.new(2.05, 0.35, 1.05) * scale,
+		Vector3.new(0, -0.65, 0) * scale, trim))
+	if not dummy then
+		attach(head, part(model, "Mask", Vector3.new(1.48, 0.5, 0.12) * scale,
+			Vector3.new(0, 1.35, -0.65) * scale, cloth))
+		for _, side in { -1, 1 } do
+			attach(head, part(model, "Eye", Vector3.new(0.23, 0.11, 0.06) * scale,
+				Vector3.new(side * 0.32, 1.72, -0.65) * scale, Color3.fromRGB(25, 28, 32)))
+		end
+	end
 	if boss then
-		part(model, "Crest", Vector3.new(2.3, 0.25, 1.1) * scale,
-			Vector3.new(0, 1, 0) * scale, trim)
+		attach(torso, part(model, "Crest", Vector3.new(2.3, 0.25, 1.1) * scale,
+			Vector3.new(0, 1, 0) * scale, trim))
 	end
 	local humanoid = Instance.new("Humanoid")
 	humanoid.Name = "Humanoid"
@@ -490,6 +574,8 @@ function EnemyService:_spawn(enemy)
 	humanoid.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
 	humanoid.BreakJointsOnDeath = false
 	humanoid.RequiresNeck = false
+	humanoid.AutoRotate = false
+	humanoid.WalkSpeed = 0
 	humanoid.Parent = model
 	local billboard = Instance.new("BillboardGui")
 	billboard.Name = "HealthDisplay"
@@ -522,6 +608,11 @@ function EnemyService:_spawn(enemy)
 	fill.BackgroundColor3 = if dummy then Color3.fromRGB(229, 192, 93) else Color3.fromRGB(230, 87, 80)
 	fill.BorderSizePixel = 0
 	fill.Parent = track
+	for _, descendant in model:GetDescendants() do
+		if descendant:IsA("BasePart") then
+			descendant.Anchored = descendant == primary
+		end
+	end
 	model.PrimaryPart = primary
 	model.Parent = self.Folder
 	model:PivotTo(CFrame.new(enemy.Spawn))
@@ -570,6 +661,11 @@ function EnemyService:_damage(enemy, player, amount)
 	enemy.Health = math.max(0, enemy.Health - amount)
 	enemy.Humanoid.Health = enemy.Health
 	enemy.HealthFill.Size = UDim2.fromScale(enemy.Health / enemy.Settings.Health, 1)
+	if enemy.Health > 0 then
+		self:_effect({ Kind = "CombatAnimation", Actor = enemy.Model, Action = "Hit",
+			StartedAt = workspace:GetServerTimeNow(), Duration = 0.22,
+			Position = enemy.Position, Boss = enemy.Kind == "Boss" })
+	end
 	self:_effect({ Kind = "Hit", Position = enemy.Position, Damage = amount })
 	if enemy.Health <= 0 then
 		-- Mark dead before issuing rewards: overlapping abilities cannot claim a kill twice.
@@ -680,7 +776,9 @@ function EnemyService:_move(enemy, destination, speed, dt)
 		end
 	end
 	enemy.Position += unit * step
-	enemy.Model:PivotTo(CFrame.lookAt(enemy.Position, enemy.Position + unit, UP))
+	-- Only the anchored root moves. Motor6D assemblies follow it, leaving clients
+	-- free to animate the limb joints without per-frame limb CFrame replication.
+	enemy.Root.CFrame = CFrame.lookAt(enemy.Position, enemy.Position + unit, UP)
 end
 
 function EnemyService:_startAttack(enemy, now)
@@ -688,6 +786,8 @@ function EnemyService:_startAttack(enemy, now)
 	local duration = if enemy.Kind == "Boss" then 1.05 else 0.7
 	enemy.LastAttack = now
 	enemy.PendingAttack = { At = now + duration, Center = enemy.Position, Radius = radius }
+	self:_effect({ Kind = "CombatAnimation", Actor = enemy.Model, Action = "EnemyWindup",
+		StartedAt = now, Duration = duration, Position = enemy.Position, Boss = enemy.Kind == "Boss" })
 	self:_effect({
 		Kind = "EnemyWindup",
 		Position = enemy.Position - Vector3.new(0, enemy.Spawn.Y - 0.15, 0),
@@ -703,6 +803,9 @@ function EnemyService:_resolveAttack(enemy)
 	if not attack then
 		return
 	end
+	self:_effect({ Kind = "CombatAnimation", Actor = enemy.Model, Action = "EnemyAttack",
+		StartedAt = workspace:GetServerTimeNow(), Duration = if enemy.Kind == "Boss" then 0.5 else 0.32,
+		Position = enemy.Position, Boss = enemy.Kind == "Boss" })
 	self:_effect({
 		Kind = "EnemyAttack",
 		Position = attack.Center - Vector3.new(0, enemy.Spawn.Y - 0.15, 0),
@@ -714,7 +817,12 @@ function EnemyService:_resolveAttack(enemy)
 		if humanoid and root and horizontal(root.Position - attack.Center).Magnitude <= attack.Radius
 			and math.abs(root.Position.Y - attack.Center.Y) < 7
 			and self:_lineClear(attack.Center, root.Position) then
+			local previousHealth = humanoid.Health
 			humanoid:TakeDamage(enemy.Settings.Damage)
+			if humanoid.Health > 0 and humanoid.Health < previousHealth then
+				self:_effect({ Kind = "CombatAnimation", Actor = player.Character, Action = "Hit",
+					StartedAt = workspace:GetServerTimeNow(), Duration = 0.22, Position = root.Position })
+			end
 		end
 	end
 end
@@ -735,6 +843,8 @@ function EnemyService:Step(dt)
 				local _, targetRoot = livingCharacter(enemy.Target)
 				local leash = math.max(38, enemy.Settings.AggroRange * 1.6)
 				if not targetRoot or horizontal(targetRoot.Position - enemy.Spawn).Magnitude > leash then
+					self:_effect({ Kind = "CombatAnimation", Actor = enemy.Model, Action = "Cancel",
+						StartedAt = now, Duration = 0, Position = enemy.Position })
 					enemy.PendingAttack = nil
 					enemy.Target = nil
 				elseif now >= enemy.PendingAttack.At then
@@ -820,6 +930,8 @@ local function configureCharacter(player, character)
 	if entry then
 		entry.Chakra = Config.MaxChakra
 		entry.ChargingUntil = nil
+		entry.LastStrikeAt = nil
+		entry.StrikeCombo = nil
 	end
 end
 
@@ -1105,14 +1217,18 @@ local COLORS = {
 function World.Build()
 	local oldWorld = workspace:FindFirstChild("ShinobiWorld")
 	if oldWorld then
+		assert(oldWorld:GetAttribute("ShinobiGenerated") == true,
+			"A custom ShinobiWorld folder already exists. Rename it or run the updated installer to migrate the old game safely.")
 		oldWorld:Destroy()
 	end
 	local root = Instance.new("Folder")
 	root.Name = "ShinobiWorld"
+	root:SetAttribute("ShinobiGenerated", true)
+	root:SetAttribute("ShinobiVersion", 2)
 	root.Parent = workspace
 
-	local function part(name, size, position, color, material, parent)
-		local object = Instance.new("Part")
+	local function part(name, size, position, color, material, parent, className)
+		local object = Instance.new(className or "Part")
 		object.Name = name
 		object.Size = size
 		object.Position = position
@@ -1123,6 +1239,25 @@ function World.Build()
 		object.BottomSurface = Enum.SurfaceType.Smooth
 		object.Parent = parent or root
 		return object
+	end
+
+	local function signText(target, text, color)
+		local surface = Instance.new("SurfaceGui")
+		surface.Name = "PaintedSign"
+		surface.Face = Enum.NormalId.Back
+		surface.CanvasSize = Vector2.new(500, 180)
+		surface.LightInfluence = 0.2
+		surface.Parent = target
+		local textLabel = Instance.new("TextLabel")
+		textLabel.Size = UDim2.fromScale(0.92, 0.82)
+		textLabel.Position = UDim2.fromScale(0.04, 0.09)
+		textLabel.BackgroundTransparency = 1
+		textLabel.Font = Enum.Font.GothamBold
+		textLabel.Text = text
+		textLabel.TextColor3 = color or COLORS.Gold
+		textLabel.TextScaled = true
+		textLabel.TextWrapped = true
+		textLabel.Parent = surface
 	end
 
 	local function model(name)
@@ -1182,20 +1317,52 @@ function World.Build()
 		light.Parent = glow
 	end
 
+	local function roof(group, x, z, width, depth, y, color)
+		-- Two overlapping sloped courses give the roof a clear tiled silhouette.
+		for tier = 0, 1 do
+			local span = depth + 6 - tier * 3
+			for _, side in ipairs({ -1, 1 }) do
+				local slope = part("SlopedTileRoof", Vector3.new(width + 7 - tier * 2, 1.1, span * 0.56),
+					Vector3.new(x, y + tier * 2 + 1.3, z + side * span * 0.23), color or COLORS.Roof, Enum.Material.Slate, group)
+				slope.CFrame *= CFrame.Angles(side * math.rad(18), 0, 0)
+				part("EaveFascia", Vector3.new(width + 8 - tier * 2, 0.65, 0.75),
+					Vector3.new(x, y + tier * 2 - 0.1, z + side * span * 0.5), COLORS.DarkWood, Enum.Material.Wood, group)
+			end
+		end
+		part("RoofRidge", Vector3.new(width + 5, 0.8, 1.2), Vector3.new(x, y + 4.5, z), COLORS.Gold, Enum.Material.Wood, group)
+		for _, side in ipairs({ -1, 1 }) do
+			local finial = part("RaisedRoofTip", Vector3.new(5, 0.7, 1.2), Vector3.new(x + side * (width / 2 + 3), y + 5.1, z), COLORS.DarkWood, Enum.Material.Wood, group)
+			finial.CFrame *= CFrame.Angles(0, 0, side * math.rad(20))
+		end
+	end
+
 	local function house(x, z, width, depth, title)
 		local group = model(title)
 		part("Foundation", Vector3.new(width + 3, 1, depth + 3), Vector3.new(x, 0.5, z), COLORS.Stone, Enum.Material.Cobblestone, group)
-		part("PlasterWalls", Vector3.new(width, 13, depth), Vector3.new(x, 7.5, z), COLORS.Plaster, Enum.Material.Plaster, group)
+		part("InteriorFloor", Vector3.new(width, 0.25, depth), Vector3.new(x, 1.1, z), Color3.fromRGB(166, 128, 85), Enum.Material.WoodPlanks, group)
+		part("BackWall", Vector3.new(width, 12, 0.8), Vector3.new(x, 7, z - depth / 2), COLORS.Plaster, Enum.Material.Plaster, group)
+		part("DoorLintel", Vector3.new(6, 4, 0.8), Vector3.new(x, 11, z + depth / 2), COLORS.Plaster, Enum.Material.Plaster, group)
 		for _, side in ipairs({-1, 1}) do
-			part("CornerBeam", Vector3.new(1, 14, 1), Vector3.new(x + side * (width / 2 - 0.4), 8, z + depth / 2), COLORS.Wood, Enum.Material.Wood, group)
-			part("CornerBeam", Vector3.new(1, 14, 1), Vector3.new(x + side * (width / 2 - 0.4), 8, z - depth / 2), COLORS.Wood, Enum.Material.Wood, group)
-			part("Window", Vector3.new(4, 4, 0.25), Vector3.new(x + side * width / 3, 8, z + depth / 2 + 0.15), Color3.fromRGB(236, 181, 91), Enum.Material.Neon, group)
+			part("SideWall", Vector3.new(0.8, 12, depth), Vector3.new(x + side * width / 2, 7, z), COLORS.Plaster, Enum.Material.Plaster, group)
+			part("FrontWall", Vector3.new((width - 6) / 2, 12, 0.8), Vector3.new(x + side * (width + 6) / 4, 7, z + depth / 2), COLORS.Plaster, Enum.Material.Plaster, group)
+			for _, front in ipairs({ -1, 1 }) do
+				part("TimberCorner", Vector3.new(1, 13, 1), Vector3.new(x + side * (width / 2 - 0.2), 7.5, z + front * depth / 2), COLORS.Wood, Enum.Material.Wood, group)
+			end
+			local windowX = x + side * (width / 3)
+			local window = part("PaperWindow", Vector3.new(4.5, 4.2, 0.15), Vector3.new(windowX, 7.4, z + depth / 2 + 0.45), Color3.fromRGB(239, 202, 127), Enum.Material.Neon, group)
+			window.CanCollide = false
+			part("WindowMullion", Vector3.new(0.22, 4.5, 0.25), Vector3.new(windowX, 7.4, z + depth / 2 + 0.55), COLORS.DarkWood, Enum.Material.Wood, group)
+			part("WindowMullion", Vector3.new(4.8, 0.22, 0.25), Vector3.new(windowX, 7.4, z + depth / 2 + 0.55), COLORS.DarkWood, Enum.Material.Wood, group)
+			part("DoorPost", Vector3.new(0.6, 8, 1), Vector3.new(x + side * 3.3, 5, z + depth / 2), COLORS.DarkWood, Enum.Material.Wood, group)
+			local banner = part("VillageBanner", Vector3.new(1.8, 5, 0.15), Vector3.new(x + side * (width / 2 - 2), 9.5, z + depth / 2 + 0.65), Color3.fromRGB(43, 87, 90), Enum.Material.Fabric, group)
+			banner.CanCollide = false
 		end
-		part("Door", Vector3.new(4, 7, 0.4), Vector3.new(x, 4.5, z + depth / 2 + 0.25), COLORS.DarkWood, Enum.Material.WoodPlanks, group)
-		for tier = 1, 3 do
-			part("LayeredRoof", Vector3.new(width + 7 - tier * 3, 1.8, depth + 7 - tier * 3), Vector3.new(x, 14 + tier * 1.6, z), COLORS.Roof, Enum.Material.Slate, group)
-		end
-		part("RoofRidge", Vector3.new(width * 0.65, 1, 1.8), Vector3.new(x, 19.7, z), COLORS.DarkWood, Enum.Material.Wood, group)
+		part("UpperBeam", Vector3.new(width + 1, 0.8, depth + 1), Vector3.new(x, 13.1, z), COLORS.Wood, Enum.Material.Wood, group)
+		part("EntryStep", Vector3.new(7, 0.5, 3), Vector3.new(x, 0.25, z + depth / 2 + 2), COLORS.Stone, Enum.Material.Cobblestone, group)
+		local sign = part("ShopSign", Vector3.new(12, 2.6, 0.7), Vector3.new(x, 11.5, z + depth / 2 + 1), COLORS.DarkWood, Enum.Material.Wood, group)
+		signText(sign, string.upper(title))
+		roof(group, x, z, width, depth, 13.5)
+		return group
 	end
 
 	local function gate(z, text)
@@ -1244,13 +1411,99 @@ function World.Build()
 	part("ValleyFloor", Vector3.new(240, 8, 390), Vector3.new(0, -4, -130), COLORS.Grass, Enum.Material.Grass)
 	part("VillagePlaza", Vector3.new(116, 0.15, 78), Vector3.new(0, 0.075, -3), COLORS.Path, Enum.Material.Ground)
 	part("MainTrail", Vector3.new(15, 0.15, 300), Vector3.new(0, 0.09, -122), COLORS.Path, Enum.Material.Ground)
+	part("VillageCrossStreet", Vector3.new(104, 0.12, 8), Vector3.new(0, 0.18, -2), COLORS.Stone, Enum.Material.Cobblestone)
+	for z = -36, 24, 6 do
+		for _, x in ipairs({ -4, 4 }) do
+			part("StreetPaving", Vector3.new(7.6, 0.16, 5.7), Vector3.new(x, 0.19, z),
+				if z % 12 == 0 then Color3.fromRGB(167, 156, 133) else Color3.fromRGB(181, 168, 142), Enum.Material.Cobblestone)
+		end
+	end
 	part("TrainingCourtyard", Vector3.new(75, 0.2, 39), Vector3.new(0, 0.1, -67), Color3.fromRGB(179, 160, 123), Enum.Material.Sand)
 	part("CampClearing", Vector3.new(92, 0.17, 73), Vector3.new(0, 0.1, -164), Color3.fromRGB(126, 115, 86), Enum.Material.Ground)
 
-	house(-34, 15, 25, 20, "Ramen House")
+	local ramen = house(-34, 15, 25, 20, "Ember Ramen")
 	house(34, 15, 25, 20, "Ninja Academy")
 	house(-35, -20, 27, 21, "Village Archives")
 	house(35, -20, 27, 21, "Mission Headquarters")
+	-- A usable restaurant interior and front terrace give the village a social center.
+	part("RamenCounter", Vector3.new(18, 3, 3), Vector3.new(-34, 2.6, 11), COLORS.DarkWood, Enum.Material.WoodPlanks, ramen)
+	part("CounterTop", Vector3.new(18.7, 0.35, 3.5), Vector3.new(-34, 4.3, 11), COLORS.Wood, Enum.Material.Wood, ramen)
+	for _, x in ipairs({ -40, -34, -28 }) do
+		part("CounterStool", Vector3.new(2.5, 2, 2.5), Vector3.new(x, 2.1, 15), COLORS.Roof, Enum.Material.Wood, ramen)
+		local bowl = part("RamenBowl", Vector3.new(1.8, 0.6, 1.8), Vector3.new(x, 4.75, 11), COLORS.Plaster, Enum.Material.SmoothPlastic, ramen)
+		bowl.Shape = Enum.PartType.Ball
+		local noodles = part("Noodles", Vector3.new(1.3, 0.18, 1.3), Vector3.new(x, 5.02, 11), Color3.fromRGB(230, 193, 102), Enum.Material.SmoothPlastic, ramen)
+		noodles.Shape = Enum.PartType.Ball
+		for _, dx in ipairs({ -0.14, 0.14 }) do
+			local chopstick = part("Chopstick", Vector3.new(0.07, 0.07, 2.2), Vector3.new(x + dx, 5.15, 11), COLORS.DarkWood, Enum.Material.Wood, ramen)
+			chopstick.CanCollide = false
+		end
+	end
+	for _, x in ipairs({ -43, -25 }) do
+		part("TerraceTable", Vector3.new(5, 0.6, 3), Vector3.new(x, 3, 33), COLORS.Wood, Enum.Material.Wood, ramen)
+		part("TablePedestal", Vector3.new(1.4, 3, 1.4), Vector3.new(x, 1.5, 33), COLORS.DarkWood, Enum.Material.Wood, ramen)
+		for _, side in ipairs({ -1, 1 }) do
+			part("TerraceBench", Vector3.new(5, 1.7, 1.2), Vector3.new(x, 0.85, 33 + side * 3), COLORS.Wood, Enum.Material.WoodPlanks, ramen)
+		end
+	end
+
+	for _, side in ipairs({ -1, 1 }) do
+		local x = side * 49
+		local stall = model(if side < 0 then "ProduceMarket" else "EquipmentMarket")
+		for _, dx in ipairs({ -5, 5 }) do
+			part("MarketPost", Vector3.new(0.55, 8.5, 0.55), Vector3.new(x + dx, 4.25, -2), COLORS.DarkWood, Enum.Material.Wood, stall)
+		end
+		part("MarketCounter", Vector3.new(10.5, 3, 3.5), Vector3.new(x, 1.5, -1), COLORS.Wood, Enum.Material.WoodPlanks, stall)
+		for stripe = -2, 2 do
+			local cloth = part("StripedAwning", Vector3.new(2.2, 0.3, 7.3), Vector3.new(x + stripe * 2.2, 8, -2),
+				if stripe % 2 == 0 then COLORS.Plaster else Color3.fromRGB(43, 87, 90), Enum.Material.Fabric, stall)
+			cloth.CFrame *= CFrame.Angles(math.rad(-9), 0, 0)
+		end
+		local board = part("MarketSign", Vector3.new(7, 1.6, 0.3), Vector3.new(x, 6.4, 1.7), COLORS.DarkWood, Enum.Material.Wood, stall)
+		signText(board, if side < 0 then "FRESH HARVEST" else "SHINOBI SUPPLIES")
+		for index = -1, 1 do
+			local goods = part("MarketGoods", Vector3.new(1.8, 1.2, 1.8), Vector3.new(x + index * 2.4, 3.6, -1),
+				if side < 0 then Color3.fromRGB(194, 83 + index * 20, 49) else Color3.fromRGB(195, 185, 146), Enum.Material.SmoothPlastic, stall)
+			goods.Shape = if side < 0 then Enum.PartType.Ball else Enum.PartType.Cylinder
+		end
+	end
+
+	local monument = model("EmberMemorial")
+	for tier = 1, 3 do
+		local base = part("MemorialPlinth", Vector3.new(1, 17 - tier * 3, 17 - tier * 3), Vector3.new(0, tier * 0.5, 37), COLORS.Stone, Enum.Material.Slate, monument)
+		base.Shape = Enum.PartType.Cylinder
+		base.CFrame *= CFrame.Angles(0, 0, math.pi / 2)
+	end
+	part("MemorialPillar", Vector3.new(3.5, 9, 3.5), Vector3.new(0, 6, 37), COLORS.DarkWood, Enum.Material.Wood, monument)
+	local ember = part("EmberCrystal", Vector3.new(3.5, 5, 3.5), Vector3.new(0, 12, 37), Color3.fromRGB(255, 155, 76), Enum.Material.Neon, monument)
+	ember.CFrame *= CFrame.Angles(0, math.rad(45), math.rad(30))
+	ember.CanCollide = false
+	local memorialBoard = part("MemorialPlaque", Vector3.new(8, 2, 0.4), Vector3.new(0, 5, 39), COLORS.DarkWood, Enum.Material.Wood, monument)
+	signText(memorialBoard, "THE WILL OF EMBER")
+	for _, x in ipairs({ -12, 12 }) do
+		part("BannerPole", Vector3.new(0.6, 17, 0.6), Vector3.new(x, 8.5, 38), COLORS.DarkWood, Enum.Material.Wood, monument)
+		local banner = part("MemorialBanner", Vector3.new(4, 8, 0.15), Vector3.new(x + (if x < 0 then 2 else -2), 12, 38), COLORS.Roof, Enum.Material.Fabric, monument)
+		banner.CanCollide = false
+		signText(banner, "EMBER\n忍", COLORS.Plaster)
+	end
+
+	local function blossom(x, z, scale)
+		local group = model("BlossomGarden")
+		part("TreePlanter", Vector3.new(7 * scale, 0.7, 7 * scale), Vector3.new(x, 0.35, z), COLORS.Stone, Enum.Material.Cobblestone, group)
+		part("BlossomTrunk", Vector3.new(1.8, 11, 1.8) * scale, Vector3.new(x, 5.8 * scale, z), COLORS.DarkWood, Enum.Material.Wood, group)
+		for index = 0, 4 do
+			local angle = index * math.pi * 2 / 5
+			local crown = part("BlossomCanopy", Vector3.new(8, 6.5, 8) * scale,
+				Vector3.new(x + math.cos(angle) * 3.2 * scale, (11 + index % 2) * scale, z + math.sin(angle) * 3.2 * scale),
+				if index % 2 == 0 then Color3.fromRGB(238, 166, 180) else Color3.fromRGB(218, 125, 154), Enum.Material.Grass, group)
+			crown.Shape = Enum.PartType.Ball
+			crown.CanCollide = false
+		end
+	end
+	blossom(-15, 28, 0.8)
+	blossom(16, 29, 0.9)
+	blossom(-16, -25, 0.7)
+	blossom(16, -25, 0.7)
 	for _, x in ipairs({-58, 58}) do
 		part("VillageWall", Vector3.new(2, 9, 80), Vector3.new(x, 4.5, -4), COLORS.Plaster, Enum.Material.Plaster)
 		part("WallCap", Vector3.new(3.2, 1, 81), Vector3.new(x, 9.3, -4), COLORS.Roof, Enum.Material.Slate)
@@ -1318,6 +1571,20 @@ function World.Build()
 		end
 		part("BridgeRail", Vector3.new(0.7, 0.7, 27), Vector3.new(x, 4.2, -106), COLORS.Roof, Enum.Material.Wood, bridge)
 	end
+	for _, x in ipairs({ -11, 11 }) do
+		lantern(Vector3.new(x, 0, -106), bridge)
+	end
+	for index = -3, 3 do
+		if index ~= 0 then
+			local x = index * 29
+			local riverStone = part("RiverStone", Vector3.new(7, 2, 4), Vector3.new(x, 0.5, -106 + index % 2 * 3), COLORS.Stone, Enum.Material.Rock)
+			riverStone.Shape = Enum.PartType.Ball
+			for reed = 0, 2 do
+				local stem = part("RiverReed", Vector3.new(0.22, 3.8 + reed * 0.4, 0.22), Vector3.new(x + reed * 0.65, 2, -96), COLORS.Leaf, Enum.Material.Grass)
+				stem.CanCollide = false
+			end
+		end
+	end
 
 	local campSign = part("CampSign", Vector3.new(8, 3, 1), Vector3.new(-22, 4, -130), COLORS.DarkWood, Enum.Material.Wood)
 	label(campSign, "ROGUE CAMP\nDefeat rogues for your mission", 280, 60, Color3.fromRGB(255, 164, 112))
@@ -1370,13 +1637,31 @@ function World.Build()
 	}) do
 		tree(specification[1], specification[2], specification[3], specification[2] < -205)
 	end
-	-- High, impassable valley edges keep players inside the authored play space.
+	-- Hidden boundary slabs retain the play-space limits; varied rock silhouettes hide them.
 	for _, x in ipairs({-116, 116}) do
-		part("ValleyCliff", Vector3.new(12, 43, 390), Vector3.new(x, 17, -130), Color3.fromRGB(103, 113, 103), Enum.Material.Rock)
-		part("CliffGrass", Vector3.new(14, 3, 390), Vector3.new(x, 40, -130), COLORS.Leaf, Enum.Material.Grass)
+		local boundary = part("ValleyBoundary", Vector3.new(12, 100, 390), Vector3.new(x, 45, -130), COLORS.Stone)
+		boundary.Transparency = 1
+		for index = 0, 11 do
+			local height = 43 + index % 4 * 9
+			local cliff = part("RockEscarpment", Vector3.new(27, height, 43),
+				Vector3.new(x + math.sign(x) * (index % 3 * 3), height / 2 - 5, 48 - index * 32),
+				Color3.fromRGB(100 + index % 3 * 8, 112 + index % 2 * 9, 103), Enum.Material.Rock, nil, "WedgePart")
+			cliff.CFrame *= CFrame.Angles(0, if x < 0 then math.pi / 2 else -math.pi / 2, 0)
+			local ridge = part("CliffRidge", Vector3.new(25, 10, 36),
+				Vector3.new(x + math.sign(x) * 6, height - 8, 48 - index * 32), Color3.fromRGB(71, 93, 75), Enum.Material.Grass)
+			ridge.Shape = Enum.PartType.Ball
+		end
 	end
 	for _, z in ipairs({63, -323}) do
-		part("ValleyEnd", Vector3.new(240, 43, 10), Vector3.new(0, 17, z), Color3.fromRGB(103, 113, 103), Enum.Material.Rock)
+		local boundary = part("ValleyEnd", Vector3.new(240, 100, 10), Vector3.new(0, 45, z), COLORS.Stone)
+		boundary.Transparency = 1
+		for index = -3, 3 do
+			local height = 48 + (index + 4) % 3 * 16
+			local mountain = part("DistantMountain", Vector3.new(45, height, 39),
+				Vector3.new(index * 36, height / 2 - 7, z + (if z > 0 then 13 else -13)),
+				Color3.fromRGB(91 + index % 2 * 10, 111, 112), Enum.Material.Rock, nil, "WedgePart")
+			mountain.CFrame *= CFrame.Angles(0, if index % 2 == 0 then 0 else math.pi, 0)
+		end
 	end
 
 	return {
@@ -1397,6 +1682,313 @@ end
 
 return World
 ]====] },
+{ Destination = "client", ClassName = "ModuleScript", Name = "CombatAnimator", Source = [====[
+-- Original procedural poses, driven by accepted server actions on every client.
+-- C0 offsets layer over the avatar's usual Animator/Animate locomotion tracks.
+-- No animation asset ownership, IDs, or web requests are required.
+local RunService = game:GetService("RunService")
+
+local CombatAnimator = {}
+local IDENTITY = CFrame.new()
+local RADIANS = math.pi / 180
+local JOINT_NAMES = {
+	root = "Root", rootjoint = "Root", waist = "Waist", neck = "Neck",
+	leftshoulder = "LeftShoulder", rightshoulder = "RightShoulder",
+	leftelbow = "LeftElbow", rightelbow = "RightElbow",
+	lefthip = "LeftHip", righthip = "RightHip",
+	leftknee = "LeftKnee", rightknee = "RightKnee",
+}
+
+local function rotation(x, y, z)
+	return CFrame.Angles((x or 0) * RADIANS, (y or 0) * RADIANS, (z or 0) * RADIANS)
+end
+
+local GUARD = {
+	Root = rotation(-4, 0, 0), Waist = rotation(-4, 0, 0),
+	LeftShoulder = rotation(38, 0, 18), RightShoulder = rotation(38, 0, -18),
+	LeftElbow = rotation(38, 0, 0), RightElbow = rotation(38, 0, 0),
+}
+local SEAL = {
+	Root = rotation(-5, 0, 0), Neck = rotation(-9, 0, 0),
+	LeftShoulder = rotation(68, -12, 34), RightShoulder = rotation(68, 12, -34),
+	LeftElbow = rotation(48, 0, 0), RightElbow = rotation(48, 0, 0),
+}
+
+-- All coordinates are in the parent body part's axes, not a rig-specific joint basis.
+-- That makes the same silhouettes work on both R6 and R15 player avatars.
+local JAB = {
+	{ 0, GUARD },
+	{ 0.19, { Root = rotation(3, 15, 0), Waist = rotation(0, 12, 0), RightShoulder = rotation(-30, -16, -14), LeftShoulder = rotation(54, 0, 18), LeftElbow = rotation(50) } },
+	{ 0.36, { Root = rotation(-10, -18, 0), Waist = rotation(-6, -16, 0), RightShoulder = rotation(104, -10, -6), RightElbow = rotation(3), LeftShoulder = rotation(45, 0, 22), LeftElbow = rotation(58), LeftHip = rotation(13), RightHip = rotation(-12) } },
+	{ 0.49, { Root = rotation(-8, -15, 0), RightShoulder = rotation(98, -8, -7), LeftShoulder = rotation(40, 0, 20), LeftElbow = rotation(50) } },
+	{ 0.82, GUARD }, { 1, {} },
+}
+local CROSS = {
+	{ 0, GUARD },
+	{ 0.19, { Root = rotation(3, -19, 0), Waist = rotation(0, -14, 0), LeftShoulder = rotation(-35, 18, 14), RightShoulder = rotation(54, 0, -18), RightElbow = rotation(50) } },
+	{ 0.36, { Root = rotation(-12, 24, 0), Waist = rotation(-6, 20, 0), LeftShoulder = rotation(105, 12, 8), LeftElbow = rotation(3), RightShoulder = rotation(45, 0, -22), RightElbow = rotation(58), RightHip = rotation(13), LeftHip = rotation(-12) } },
+	{ 0.5, { Root = rotation(-8, 18, 0), LeftShoulder = rotation(97, 10, 8), RightShoulder = rotation(40, 0, -20), RightElbow = rotation(50) } },
+	{ 0.82, GUARD }, { 1, {} },
+}
+local KICK = {
+	{ 0, GUARD },
+	{ 0.22, { Root = rotation(8, -22, -5), Waist = rotation(0, -12, 0), RightHip = rotation(65, -10, -8), RightKnee = rotation(-75), LeftHip = rotation(-10), LeftShoulder = rotation(48, 0, 25), RightShoulder = rotation(35, 0, -30) } },
+	{ 0.415, { Root = rotation(12, -30, -8), Waist = rotation(0, -10, 0), RightHip = rotation(108, -14, -12), RightKnee = rotation(-4), LeftHip = rotation(-12), LeftShoulder = rotation(58, 0, 24), RightShoulder = rotation(-18, 0, -34), Neck = rotation(-8, 15, 0) } },
+	{ 0.58, { Root = rotation(7, -20, -4), RightHip = rotation(78, -12, -8), RightKnee = rotation(-45), LeftShoulder = rotation(42, 0, 20), RightShoulder = rotation(20, 0, -25) } },
+	{ 0.85, GUARD }, { 1, {} },
+}
+local RASENGAN = {
+	{ 0, GUARD },
+	{ 0.22, { Root = rotation(6, 24, 0), Waist = rotation(0, 15, 0), RightShoulder = rotation(-48, -20, -18), RightElbow = rotation(40), LeftShoulder = rotation(65, 0, 20), LeftElbow = rotation(35) } },
+	{ 0.4, { Root = CFrame.new(0, -0.08, -0.1) * rotation(-18, -16, 0), Waist = rotation(-8, -14, 0), RightShoulder = rotation(111, -8, -5), RightElbow = rotation(2), LeftShoulder = rotation(-20, 0, 30), RightHip = rotation(-20), LeftHip = rotation(20) } },
+	{ 0.61, { Root = rotation(-10, -12, 0), RightShoulder = rotation(100, -5, -8), LeftShoulder = rotation(24, 0, 22) } },
+	{ 0.85, GUARD }, { 1, {} },
+}
+local FIREBALL = {
+	{ 0, GUARD }, { 0.19, SEAL },
+	{ 0.38, { Root = rotation(5, 0, 0), Neck = rotation(8), LeftShoulder = rotation(78, -8, 33), RightShoulder = rotation(78, 8, -33), LeftElbow = rotation(45), RightElbow = rotation(45) } },
+	{ 0.49, { Root = rotation(-14, 0, 0), Waist = rotation(-8), Neck = rotation(-18), LeftShoulder = rotation(62, 0, 27), RightShoulder = rotation(62, 0, -27), LeftElbow = rotation(48), RightElbow = rotation(48) } },
+	{ 0.7, SEAL }, { 1, {} },
+}
+local CLONE = {
+	{ 0, GUARD }, { 0.2, SEAL },
+	{ 0.36, { Root = rotation(-5), LeftShoulder = rotation(80, -14, 40), RightShoulder = rotation(58, 14, -40), LeftElbow = rotation(35), RightElbow = rotation(60), Neck = rotation(-12) } },
+	{ 0.53, SEAL },
+	{ 0.72, { Root = rotation(-7), LeftShoulder = rotation(58, -14, 40), RightShoulder = rotation(80, 14, -40), LeftElbow = rotation(60), RightElbow = rotation(35), Neck = rotation(-12) } },
+	{ 1, {} },
+}
+local DASH_POSE = {
+	Root = rotation(-30), Waist = rotation(-12), Neck = rotation(22),
+	LeftShoulder = rotation(-38, 0, 10), RightShoulder = rotation(-38, 0, -10),
+	LeftHip = rotation(36), RightHip = rotation(-30), LeftKnee = rotation(-28), RightKnee = rotation(-35),
+}
+local CHARGE_POSE = {
+	Root = CFrame.new(0, -0.06, 0) * rotation(4), Waist = rotation(-5), Neck = rotation(-8),
+	LeftShoulder = rotation(25, 0, 22), RightShoulder = rotation(25, 0, -22),
+	LeftElbow = rotation(65), RightElbow = rotation(65),
+	LeftHip = rotation(-7, 0, -6), RightHip = rotation(-7, 0, 6), LeftKnee = rotation(12), RightKnee = rotation(12),
+}
+local BOSS_WINDUP = {
+	Root = rotation(12), Waist = rotation(8), Neck = rotation(-10),
+	LeftShoulder = rotation(163, 0, 12), RightShoulder = rotation(163, 0, -12),
+	LeftHip = rotation(-14, 0, -5), RightHip = rotation(-14, 0, 5), LeftElbow = rotation(-15), RightElbow = rotation(-15),
+}
+local BOSS_SLAM = {
+	Root = CFrame.new(0, -0.2, 0) * rotation(-24), Waist = rotation(-16), Neck = rotation(12),
+	LeftShoulder = rotation(102, 0, 8), RightShoulder = rotation(102, 0, -8),
+	LeftHip = rotation(20, 0, -5), RightHip = rotation(20, 0, 5), LeftKnee = rotation(-25), RightKnee = rotation(-25),
+}
+local BANDIT_WINDUP = { Root = rotation(8, 24, 0), Waist = rotation(0, 16, 0), RightShoulder = rotation(-40, -18, -18), LeftShoulder = rotation(48, 0, 20), LeftElbow = rotation(45) }
+local BANDIT_PUNCH = { Root = rotation(-12, -22, 0), Waist = rotation(-8, -15, 0), RightShoulder = rotation(105, -10, -6), LeftShoulder = rotation(42, 0, 20), LeftElbow = rotation(45) }
+local FLINCH = { Root = rotation(10, 0, 4), Waist = rotation(8, 0, 3), Neck = rotation(14, -5, 0), RightShoulder = rotation(-15, 0, -7), LeftShoulder = rotation(-15, 0, 7) }
+local ACTIONS = { Strike = true, Rasengan = true, Fireball = true, ShadowClone = true, Dash = true, Charge = true, EnemyWindup = true, EnemyAttack = true, Hit = true, Cancel = true }
+
+local function finite(number)
+	return type(number) == "number" and number == number and math.abs(number) < math.huge
+end
+
+local function blendPose(first, second, alpha)
+	local pose = {}
+	for key, value in first do pose[key] = value:Lerp(second[key] or IDENTITY, alpha) end
+	for key, value in second do
+		if not first[key] then pose[key] = IDENTITY:Lerp(value, alpha) end
+	end
+	return pose
+end
+
+local function sample(frames, progress)
+	if progress <= frames[1][1] then return frames[1][2] end
+	for index = 2, #frames do
+		local right, left = frames[index], frames[index - 1]
+		if progress <= right[1] then
+			local t = math.clamp((progress - left[1]) / (right[1] - left[1]), 0, 1)
+			return blendPose(left[2], right[2], t * t * (3 - 2 * t))
+		end
+	end
+	return frames[#frames][2]
+end
+
+local function actionPose(action, progress)
+	local name = action.Action
+	if name == "Strike" then return sample(if action.Combo == 3 then KICK elseif action.Combo == 2 then CROSS else JAB, progress) end
+	if name == "Rasengan" then return sample(RASENGAN, progress) end
+	if name == "Fireball" then return sample(FIREBALL, progress) end
+	if name == "ShadowClone" then return sample(CLONE, progress) end
+	if name == "Dash" then return sample({ { 0, DASH_POSE }, { 0.65, DASH_POSE }, { 1, {} } }, progress) end
+	if name == "Charge" then return sample({ { 0, {} }, { 0.12, CHARGE_POSE }, { 0.88, CHARGE_POSE }, { 1, {} } }, progress) end
+	if name == "EnemyWindup" then
+		local preparation = if action.Boss then BOSS_WINDUP else BANDIT_WINDUP
+		local contact = if action.Boss then BOSS_SLAM else BANDIT_PUNCH
+		-- Strike during the final part of the warning, reaching contact exactly when
+		-- the server resolves damage. EnemyAttack then continues from that same pose.
+		return sample({ { 0, GUARD }, { 0.55, preparation }, { 0.78, preparation }, { 1, contact } }, progress)
+	end
+	if name == "EnemyAttack" then return sample({ { 0, if action.Boss then BOSS_SLAM else BANDIT_PUNCH }, { 0.22, if action.Boss then BOSS_SLAM else BANDIT_PUNCH }, { 0.8, GUARD }, { 1, {} } }, progress) end
+	return {}
+end
+
+local function reset(record)
+	for _, joint in record.Joints do
+		if joint.Motor.Parent and joint.Applied then
+			if joint.Motor.C0 == joint.Applied then joint.Motor.C0 = joint.Base end
+			joint.Applied = nil
+		end
+	end
+end
+
+local function scanJoints(record)
+	for _, descendant in record.Model:GetDescendants() do
+		if descendant:IsA("Motor6D") and descendant.Part0 and descendant.Part1 and not record.Joints[descendant] then
+			local semantic = JOINT_NAMES[string.lower(string.gsub(descendant.Name, "[%s_]", ""))]
+			if semantic then
+				record.Joints[descendant] = { Motor = descendant, Name = semantic, Base = descendant.C0 }
+			end
+		end
+	end
+end
+
+local function register(records, model)
+	if records[model] then return records[model] end
+	if typeof(model) ~= "Instance" or not model:IsA("Model") or not model.Parent then return nil end
+	local humanoid = model:FindFirstChildOfClass("Humanoid")
+	local root = model:FindFirstChild("HumanoidRootPart")
+	if not humanoid or not root or not root:IsA("BasePart") then return nil end
+	local kind = model:GetAttribute("EnemyKind")
+	local record = {
+		Model = model, Humanoid = humanoid, Root = root, Joints = {},
+		NPC = kind ~= nil, Dummy = kind == "Dummy", LastPosition = root.Position,
+		Speed = 0, Gait = 0, ScanAt = 0,
+	}
+	scanJoints(record)
+	records[model] = record
+	return record
+end
+
+local function locomotion(record, dt, now)
+	local position = record.Root.Position
+	local delta = position - record.LastPosition
+	record.LastPosition = position
+	local speed = math.min(Vector3.new(delta.X, 0, delta.Z).Magnitude / math.max(dt, 0.001), 28)
+	record.Speed += (speed - record.Speed) * (1 - math.exp(-dt * 12))
+	record.Gait += dt * math.max(0, record.Speed) * 0.58
+	local stride = math.sin(record.Gait)
+	local moving = math.clamp(record.Speed / 9, 0, 1)
+	local idle = math.sin(now * 2.3) * 1.3
+	if record.Dummy then return {} end
+	return {
+		Root = CFrame.new(0, math.abs(stride) * 0.055 * moving, 0) * rotation(-6 * moving, 0, stride * moving * 2),
+		Neck = rotation(idle * 0.5 + 3 * moving, 0, 0),
+		LeftShoulder = rotation(18 + stride * 38 * moving + idle, 0, 10),
+		RightShoulder = rotation(18 - stride * 38 * moving - idle, 0, -10),
+		LeftHip = rotation(-stride * 42 * moving, 0, 0),
+		RightHip = rotation(stride * 42 * moving, 0, 0),
+	}
+end
+
+function CombatAnimator.Start(effectRemote)
+	local records = {}
+	local controller = { Destroyed = false }
+	local scanElapsed = 1
+	local effectConnection = effectRemote.OnClientEvent:Connect(function(packet)
+		if controller.Destroyed or type(packet) ~= "table" or packet.Kind ~= "CombatAnimation" or not ACTIONS[packet.Action] then return end
+		local record = register(records, packet.Actor)
+		if not record then return end
+		if packet.Action == "Cancel" then record.Active = nil; return end
+		local now = workspace:GetServerTimeNow()
+		local start = if finite(packet.StartedAt) then packet.StartedAt else now
+		local duration = if finite(packet.Duration) then math.clamp(packet.Duration, 0.08, 6) else 0.4
+		if now - start > duration + 0.2 or start > now + 1 then return end
+		local action = { Action = packet.Action, StartedAt = start, Duration = duration, Combo = packet.Combo, Boss = packet.Boss == true }
+		if packet.Action == "Hit" then
+			record.Flinch = action
+		else
+			-- An older delayed packet must not replace a more recent accepted action.
+			if record.Active and record.Active.StartedAt > start then return end
+			record.Active = action
+		end
+	end)
+	local frameConnection = RunService.PreSimulation:Connect(function(dt)
+		if controller.Destroyed then return end
+		dt = math.min(dt, 0.1)
+		local now = workspace:GetServerTimeNow()
+		scanElapsed += dt
+		if scanElapsed >= 0.5 then
+			scanElapsed = 0
+			local folder = workspace:FindFirstChild("ShinobiEnemies")
+			if folder then
+				for _, model in folder:GetChildren() do register(records, model) end
+			end
+		end
+		for model, record in records do
+			if not model.Parent or not record.Root.Parent or not record.Humanoid.Parent or record.Humanoid.Health <= 0 then
+				reset(record)
+				records[model] = nil
+				continue
+			end
+			local camera = workspace.CurrentCamera
+			if camera and (camera.CFrame.Position - record.Root.Position).Magnitude > 230 then
+				reset(record)
+				record.LastPosition = record.Root.Position
+				continue
+			end
+			if now >= record.ScanAt then
+				scanJoints(record)
+				record.ScanAt = now + 1
+			end
+			local pose = if record.NPC then locomotion(record, dt, now) else {}
+			local active = record.Active
+			if active then
+				local elapsed = now - active.StartedAt
+				local canceledCharge = active.Action == "Charge" and (record.Humanoid.MoveDirection.Magnitude > 0.1 or record.Root.AssemblyLinearVelocity.Magnitude > 4)
+				local allowance = if active.Action == "EnemyWindup" then 0.15 else 0
+				if elapsed > active.Duration + allowance or canceledCharge then
+					record.Active = nil
+				else
+					local action = actionPose(active, math.clamp(elapsed / active.Duration, 0, 1))
+					for key, value in action do pose[key] = value end
+				end
+			end
+			local flinch = record.Flinch
+			if flinch then
+				local elapsed = (now - flinch.StartedAt) / flinch.Duration
+				if elapsed >= 1 then
+					record.Flinch = nil
+				else
+					local weight = math.sin(math.clamp(elapsed, 0, 1) * math.pi)
+					for key, value in FLINCH do pose[key] = (pose[key] or IDENTITY) * IDENTITY:Lerp(value, weight) end
+				end
+			end
+			if not record.NPC and not record.Active and not record.Flinch then
+				reset(record)
+				records[model] = nil
+				continue
+			end
+			for _, joint in record.Joints do
+				local motor = joint.Motor
+				if not motor.Parent then continue end
+				-- Respect a deliberate external rig/scale update rather than restoring stale C0.
+				if motor.C0 ~= joint.Applied and motor.C0 ~= joint.Base then joint.Base = motor.C0 end
+				local offset = pose[joint.Name] or IDENTITY
+				local base = joint.Base
+				local applied = CFrame.new(base.Position) * offset * base.Rotation
+				motor.C0 = applied
+				joint.Applied = motor.C0
+			end
+		end
+	end)
+	function controller:Destroy()
+		if self.Destroyed then return end
+		self.Destroyed = true
+		effectConnection:Disconnect()
+		frameConnection:Disconnect()
+		for _, record in records do reset(record) end
+		table.clear(records)
+	end
+	return controller
+end
+
+return CombatAnimator
+]====] },
 { Destination = "client", ClassName = "LocalScript", Name = "Main", Source = [====[
 -- Client presentation and input only. Combat outcomes and progression belong to the server.
 local Players = game:GetService("Players")
@@ -1416,6 +2008,7 @@ local actionRemote = remotes:WaitForChild("Action")
 local stateRemote = remotes:WaitForChild("State")
 local effectRemote = remotes:WaitForChild("Effect")
 local requestStateRemote = remotes:WaitForChild("RequestState")
+local combatAnimator = require(script.Parent:WaitForChild("CombatAnimator")).Start(effectRemote)
 
 local COLORS = {
 	Ink = Color3.fromRGB(17, 23, 28),
@@ -1603,6 +2196,16 @@ local settings = create("TextButton", {
 corner(settings, 8)
 stroke(settings)
 
+local shiftLock = require(script.Parent:WaitForChild("ShiftLock")).Start({
+	Gui = gui,
+	IsBlocked = function() return introOpen end,
+	Notify = notify,
+})
+script.Destroying:Connect(function()
+	shiftLock:Destroy()
+	combatAnimator:Destroy()
+end)
+
 local overlay = create("Frame", {
 	Size = UDim2.fromScale(1, 1),
 	BackgroundColor3 = COLORS.Ink,
@@ -1649,7 +2252,7 @@ local enterButton = create("TextButton", {
 	ZIndex = 32,
 }, welcome)
 corner(enterButton, 8)
-local welcomeControls = welcomeLabel("WASD to move · Space to jump · Z / X / C jutsu · Q dash · R focus", 400, 28, 10, COLORS.Muted)
+local welcomeControls = welcomeLabel("WASD move · Space jump · Z / X / C jutsu · Q dash · R focus · Shift lock", 400, 28, 10, COLORS.Muted)
 welcomeControls.TextWrapped = true
 welcomeControls.TextXAlignment = Enum.TextXAlignment.Center
 
@@ -1680,7 +2283,7 @@ local function aimPosition()
 	end
 	local lastInput = UserInputService:GetLastInputType()
 	local screenPoint = camera.ViewportSize / 2
-	if lastInput ~= Enum.UserInputType.Touch and not string.find(lastInput.Name, "Gamepad") then
+	if not shiftLock:IsActive() and lastInput ~= Enum.UserInputType.Touch and not string.find(lastInput.Name, "Gamepad") then
 		-- ScreenPointToRay accounts for the inset in GetMouseLocation coordinates.
 		screenPoint = UserInputService:GetMouseLocation()
 		local ray = camera:ScreenPointToRay(screenPoint.X, screenPoint.Y)
@@ -1808,11 +2411,11 @@ local function updateControls()
 		controls.Key.Text = gamepad and gamepadNames[actionId] or Config.Actions[actionId].Key
 	end
 	if gamepad then
-		welcomeControls.Text = "Left stick to move · A to jump · X / Y / B jutsu · LB dash · RB focus"
+		welcomeControls.Text = "Left stick move · A jump · X / Y / B jutsu · LB dash · RB focus · R3 camera lock"
 	elseif UserInputService.TouchEnabled then
-		welcomeControls.Text = "Use the movement stick and jump button. Tap the jutsu buttons to fight."
+		welcomeControls.Text = "Use the movement stick and jump button. Tap jutsu to fight, or Camera Lock to aim."
 	else
-		welcomeControls.Text = "WASD to move · Space to jump · Z / X / C jutsu · Q dash · R focus"
+		welcomeControls.Text = "WASD move · Space jump · Z / X / C jutsu · Q dash · R focus · Shift lock"
 	end
 end
 
@@ -2037,6 +2640,9 @@ local function resize()
 		sessionLabel.Position = UDim2.new(0.5, 0, 0, 74 + 338 * portraitScale)
 		toast.Position = UDim2.new(0.5, 0, 0, 18 + 194 * portraitScale)
 	end
+	shiftLock.Button.Position = settings.Position - UDim2.fromOffset(settings.Size.X.Offset + 8, 0)
+	shiftLock.Button.Size = UDim2.fromOffset(compact and 108 or 146, 28)
+	shiftLock.Button.TextSize = compact and 9 or 10
 	if UserInputService.TouchEnabled then
 		actionPanel.Size = UDim2.fromOffset(268, 178)
 		actionPanel.Position = UDim2.new(1, -18, 1, -145)
@@ -2096,6 +2702,218 @@ watchCamera()
 updateControls()
 requestStateRemote:FireServer()
 ]====] },
+{ Destination = "client", ClassName = "ModuleScript", Name = "ShiftLock", Source = [====[
+-- A shoulder camera mode that leaves Roblox's camera collision and zoom intact.
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+local GuiService = game:GetService("GuiService")
+local ContextActionService = game:GetService("ContextActionService")
+
+local ShiftLock = {}
+ShiftLock.__index = ShiftLock
+local currentController = nil
+local RENDER_NAME = "ShinobiShiftLockCamera"
+local GAMEPAD_ACTION = "ShinobiToggleCameraLock"
+local SHOULDER_OFFSET = Vector3.new(1.75, 0.25, 0)
+
+local function instance(className, properties, parent)
+	local object = Instance.new(className)
+	for key, value in properties do object[key] = value end
+	object.Parent = parent
+	return object
+end
+
+function ShiftLock:_release()
+	if not self._active then return end
+	self._active = false
+	if self._humanoid and self._humanoid.Parent then
+		self._humanoid.AutoRotate = self._savedAutoRotate
+		self._humanoid.CameraOffset = self._savedOffset
+	end
+	UserInputService.MouseBehavior = self._savedMouseBehavior
+	UserInputService.MouseIconEnabled = self._savedMouseIcon
+	self._humanoid = nil
+	self._root = nil
+	self._reticle.Visible = false
+end
+
+function ShiftLock:_blocked(allowAlt)
+	return not self._windowFocused or GuiService.MenuIsOpen
+		or UserInputService:GetFocusedTextBox() ~= nil
+		or (not allowAlt and (UserInputService:IsKeyDown(Enum.KeyCode.LeftAlt)
+			or UserInputService:IsKeyDown(Enum.KeyCode.RightAlt)))
+		or not self._gui.Enabled or not self._gui.Parent
+		or (self._isBlocked and self._isBlocked())
+end
+
+function ShiftLock:_parts()
+	local character = self._player.Character
+	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+	local root = character and character:FindFirstChild("HumanoidRootPart")
+	local camera = workspace.CurrentCamera
+	if not humanoid or not root or not root:IsA("BasePart") or humanoid.Health <= 0
+		or humanoid.Sit or humanoid.PlatformStand or root.Anchored or not camera
+		or camera.CameraType == Enum.CameraType.Scriptable then
+		return nil
+	end
+	local subject = camera.CameraSubject
+	if subject and subject ~= humanoid and not subject:IsDescendantOf(character) then return nil end
+	return humanoid, root, camera
+end
+
+function ShiftLock:_refreshButton()
+	local gamepad = string.find(UserInputService:GetLastInputType().Name, "Gamepad") ~= nil
+	local prefix = if gamepad then "R3 LOCK" elseif UserInputService.KeyboardEnabled then "SHIFT LOCK" else "CAMERA LOCK"
+	local status = if self._active then "ON" elseif self._enabled then "PAUSED" else "OFF"
+	local text = prefix .. " / " .. status
+	if self.Button.Text ~= text then self.Button.Text = text end
+	self.Button.TextColor3 = if self._enabled then Color3.fromRGB(255, 185, 100) else Color3.fromRGB(175, 180, 169)
+	self._outline.Color = if self._enabled then Color3.fromRGB(255, 157, 67) else Color3.fromRGB(77, 83, 78)
+end
+
+function ShiftLock:_step(dt)
+	if self._destroyed then return end
+	local humanoid, root, camera
+	if self._enabled and not self:_blocked() then
+		humanoid, root, camera = self:_parts()
+	end
+	if not humanoid then
+		self:_release()
+		self:_refreshButton()
+		return
+	end
+	if self._active and self._humanoid ~= humanoid then self:_release() end
+	if not self._active then
+		self._humanoid, self._root = humanoid, root
+		self._savedAutoRotate = humanoid.AutoRotate
+		self._savedOffset = humanoid.CameraOffset
+		self._savedMouseBehavior = UserInputService.MouseBehavior
+		self._savedMouseIcon = UserInputService.MouseIconEnabled
+		self._active = true
+	end
+	humanoid.AutoRotate = false
+	-- CameraOffset lets the standard Roblox camera keep its wall-occlusion handling.
+	local firstPerson = (camera.Focus.Position - camera.CFrame.Position).Magnitude < 0.75
+	humanoid.CameraOffset = self._savedOffset + (if firstPerson then Vector3.zero else SHOULDER_OFFSET)
+	if UserInputService.MouseEnabled then
+		UserInputService.MouseBehavior = Enum.MouseBehavior.LockCenter
+		UserInputService.MouseIconEnabled = false
+	end
+	local look = camera.CFrame.LookVector
+	local flatLook = Vector3.new(look.X, 0, look.Z)
+	if flatLook.Magnitude > 0.001 then
+		local facing = CFrame.lookAt(root.Position, root.Position + flatLook.Unit)
+		root.CFrame = root.CFrame:Lerp(facing, 1 - math.exp(-24 * math.min(dt, 0.1)))
+	end
+	self._reticle.Visible = true
+	self:_refreshButton()
+end
+
+function ShiftLock:IsActive()
+	return not self._destroyed and self._active
+end
+
+function ShiftLock:Toggle(fromButton)
+	-- Alt frees the cursor specifically so the player can click this button too.
+	if self._destroyed or self:_blocked(fromButton == true) then return end
+	self._enabled = not self._enabled
+	if not self._enabled then self:_release() end
+	self:_refreshButton()
+	if self._notify then
+		local message = if self._enabled then "Camera lock enabled." else "Camera lock disabled."
+		if self._enabled and UserInputService.KeyboardEnabled then message = "Shift Lock on. Hold Alt to use menus; Shift turns it off." end
+		self._notify(message)
+	end
+end
+
+function ShiftLock:Destroy()
+	if self._destroyed then return end
+	self._destroyed = true
+	self:_release()
+	RunService:UnbindFromRenderStep(RENDER_NAME)
+	if self._gamepadBound then ContextActionService:UnbindAction(GAMEPAD_ACTION) end
+	for _, connection in self._connections do connection:Disconnect() end
+	table.clear(self._connections)
+	self._reticleGui:Destroy()
+	self.Button:Destroy()
+	if currentController == self then currentController = nil end
+end
+
+function ShiftLock.Start(options)
+	if currentController then currentController:Destroy() end
+	local self = setmetatable({}, ShiftLock)
+	self._player = Players.LocalPlayer
+	self._gui = options.Gui
+	self._isBlocked = options.IsBlocked
+	self._notify = options.Notify
+	self._enabled, self._active, self._destroyed = false, false, false
+	self._windowFocused = true
+	self._connections = {}
+	self.Button = instance("TextButton", {
+		Name = "ShiftLockToggle", AnchorPoint = Vector2.new(1, 0),
+		Position = UDim2.new(1, -172, 0, 171), Size = UDim2.fromOffset(146, 28),
+		Text = "SHIFT LOCK / OFF", TextColor3 = Color3.fromRGB(175, 180, 169),
+		TextSize = 10, Font = Enum.Font.GothamBold,
+		BackgroundColor3 = Color3.fromRGB(17, 23, 28), BackgroundTransparency = 0.15,
+		BorderSizePixel = 0, AutoButtonColor = true,
+	}, options.Gui)
+	instance("UICorner", { CornerRadius = UDim.new(0, 8) }, self.Button)
+	self._outline = instance("UIStroke", { Color = Color3.fromRGB(77, 83, 78), Transparency = 0.15, Thickness = 1 }, self.Button)
+	-- A separate inset-free layer keeps the reticle exactly on ViewportPointToRay's center.
+	self._reticleGui = instance("ScreenGui", {
+		Name = "ShinobiAimReticle", IgnoreGuiInset = true, ResetOnSpawn = false,
+		DisplayOrder = options.Gui.DisplayOrder + 1, ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+	}, self._player:WaitForChild("PlayerGui"))
+	self._reticle = instance("Frame", {
+		Name = "Reticle", AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5),
+		Size = UDim2.fromOffset(28, 28), BackgroundTransparency = 1, Visible = false,
+	}, self._reticleGui)
+	for _, segment in {
+		{ 3, 13, 6, 2 }, { 19, 13, 6, 2 }, { 13, 3, 2, 6 }, { 13, 19, 2, 6 },
+	} do
+		instance("Frame", {
+			Position = UDim2.fromOffset(segment[1], segment[2]), Size = UDim2.fromOffset(segment[3], segment[4]),
+			BackgroundColor3 = Color3.fromRGB(242, 234, 212), BorderSizePixel = 0,
+		}, self._reticle)
+	end
+	instance("Frame", {
+		Position = UDim2.fromOffset(13, 13), Size = UDim2.fromOffset(2, 2),
+		BackgroundColor3 = Color3.fromRGB(255, 157, 67), BorderSizePixel = 0,
+	}, self._reticle)
+	local function connect(signal, callback)
+		table.insert(self._connections, signal:Connect(callback))
+	end
+	connect(self.Button.Activated, function() self:Toggle(true) end)
+	connect(UserInputService.InputBegan, function(input, processed)
+		if processed then return end
+		if input.KeyCode == Enum.KeyCode.LeftShift or input.KeyCode == Enum.KeyCode.RightShift then self:Toggle() end
+	end)
+	-- Roblox's default camera also binds R3 to zoom. Own that input while playing
+	-- so one press cannot both toggle shoulder mode and jump the zoom distance.
+	ContextActionService:BindActionAtPriority(GAMEPAD_ACTION, function(_, inputState)
+		if self:_blocked() then return Enum.ContextActionResult.Pass end
+		if inputState == Enum.UserInputState.Begin then self:Toggle() end
+		return Enum.ContextActionResult.Sink
+	end, false, Enum.ContextActionPriority.High.Value, Enum.KeyCode.ButtonR3)
+	self._gamepadBound = true
+	connect(UserInputService.WindowFocusReleased, function()
+		self._windowFocused = false
+		self:_release()
+	end)
+	connect(UserInputService.WindowFocused, function() self._windowFocused = true end)
+	connect(UserInputService.TextBoxFocused, function() self:_release() end)
+	connect(GuiService.MenuOpened, function() self:_release() end)
+	connect(self._player.CharacterRemoving, function() self:_release() end)
+	connect(self._player.CharacterAdded, function() self:_release() end)
+	connect(options.Gui.Destroying, function() self:Destroy() end)
+	RunService:BindToRenderStep(RENDER_NAME, Enum.RenderPriority.Camera.Value + 1, function(dt) self:_step(dt) end)
+	currentController = self
+	return self
+end
+
+return ShiftLock
+]====] },
 }
 
 -- Prepare all source containers before enabling the game entry points.
@@ -2109,6 +2927,7 @@ for key, destination in destinations do
     local folder = Instance.new("Folder")
     folder.Name = destination.Name
     folder:SetAttribute("ShinobiInstaller", true)
+    folder:SetAttribute("ShinobiVersion", 2)
     roots[key] = folder
 end
 for _, definition in scripts do
@@ -2117,21 +2936,40 @@ for _, definition in scripts do
     object.Source = definition.Source
     object.Parent = roots[definition.Destination]
 end
-for key, destination in destinations do
-    roots[key].Parent = destination.Parent
+-- Back up the installed scripts and world, including any user edits, before updating.
+if #previousRoots > 0 or previousWorld then
+    local backupName = "ShinobiBackup_" .. tostring(os.time())
+    local suffix = 1
+    while ServerStorage:FindFirstChild(backupName) do
+        suffix += 1
+        backupName = "ShinobiBackup_" .. tostring(os.time()) .. "_" .. suffix
+    end
+    local previous = Instance.new("Folder")
+    previous.Name = backupName
+    previous.Parent = ServerStorage
+    for _, oldRoot in previousRoots do oldRoot.Parent = previous end
+    if previousWorld then previousWorld.Parent = previous end
+    print("Your previous Shinobi scripts and village were saved in ServerStorage/" .. backupName)
 end
+for key, destination in destinations do roots[key].Parent = destination.Parent end
 
 -- Retain the template pieces in ServerStorage so they can be restored if needed.
-local backup = Instance.new("Folder")
-backup.Name = "ShinobiOriginalTemplate"
-backup.Parent = ServerStorage
-local baseplate = workspace:FindFirstChild("Baseplate")
-if baseplate and baseplate:IsA("BasePart") then baseplate.Parent = backup end
-local spawn = workspace:FindFirstChild("SpawnLocation")
-if spawn and spawn:IsA("SpawnLocation") then spawn.Parent = backup end
+if #previousRoots == 0 then
+    local backup = ServerStorage:FindFirstChild("ShinobiOriginalTemplate")
+    if not backup then
+        backup = Instance.new("Folder")
+        backup.Name = "ShinobiOriginalTemplate"
+        backup.Parent = ServerStorage
+    end
+    local baseplate = workspace:FindFirstChild("Baseplate")
+    if baseplate and baseplate:IsA("BasePart") then baseplate.Parent = backup end
+    local spawn = workspace:FindFirstChild("SpawnLocation")
+    if spawn and spawn:IsA("SpawnLocation") then spawn.Parent = backup end
+end
 
 StarterPlayer.CameraMaxZoomDistance = 40
 StarterPlayer.CameraMinZoomDistance = 6
+StarterPlayer.EnableMouseLockOption = false -- The game's Shift Lock controller owns this toggle.
 workspace.Gravity = 196.2
 game:GetService("SoundService").RespectFilteringEnabled = true
 
@@ -2143,5 +2981,5 @@ if not success then
     warn("Shinobi scripts installed. Village preview failed: " .. tostring(problem))
     warn("Check Output before playing. The game also creates the world when Play starts.")
 else
-    print("SHINOBI: EMBER LEGACY installed! Press Play, dismiss the welcome card, and talk to Sensei.")
+    print("SHINOBI: EMBER LEGACY v2 installed! Press Play. Left click for a punch/punch/kick combo; Shift toggles shoulder lock.")
 end

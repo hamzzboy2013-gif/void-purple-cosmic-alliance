@@ -1,29 +1,42 @@
-SHINOBI: EMBER LEGACY — OPEN AND RUN IN ROBLOX STUDIO
+SHINOBI: EMBER LEGACY v2 — WINDOWS GUIDE
 
-1. Download ShinobiEmberLegacy-Installer.lua to your computer.
-2. Open that file in a text editor: Notepad on Windows, or TextEdit/VS Code on macOS.
-   If double-clicking does not work, right-click it and choose Open With, then your text editor.
-3. Select all the code (Ctrl+A on Windows, Command+A on macOS), then copy it (Ctrl+C / Command+C).
-4. Open Roblox Studio on Windows or macOS and create a NEW Baseplate.
-5. While in Edit mode, show the Command Bar. Look for Command Bar in Studio's View or Window menu, depending on your Studio version.
-6. Click inside the Command Bar at the bottom of Studio, paste ALL the copied code, and press Enter.
-7. Wait for the village to appear. The installer prints a success message in Output.
-8. Press Play (the triangle button). Dismiss the welcome card and walk to Sensei to begin.
-9. Stop the playtest, then use File > Save to File (or Save to File As) to keep your installed place. Publishing to Roblox is a separate step.
+WHAT IS NEW
+- Animated punch/punch/kick combo, Rasengan thrust, jutsu hand signs, chakra focus and dash poses.
+- Jointed enemies with walking, attack wind-ups, boss slam and hit reactions.
+- Improved village: layered roofs, enterable buildings, ramen and market stalls, blossom gardens, plaza monument and richer river scenery.
+- Shift Lock: shoulder camera, center aiming and a visible lock button.
 
-This file is an INSTALLER for the Command Bar. Opening it in a text editor only shows the code; the code runs after you paste it into Studio's Command Bar.
-Run the installer once in a new place. Stop Play mode before installing. If it reports that Shinobi is already installed, press Play in that place, or open a new Baseplate for another copy.
+OPTION A — OPEN THE NEW GAME DIRECTLY
+1. Download the GitHub ZIP and right-click it > Extract All.
+2. Open the extracted folder, then Roblox > Download.
+3. In Roblox Studio, use File > Open from File and select ShinobiEmberLegacy.rbxlx.
+4. Press Play. The village is built when the server starts. Dismiss the welcome card and talk to Sensei.
+5. After testing, press Stop and use File > Save to File to keep your place.
+
+OPTION B — UPDATE THE PLACE YOU ALREADY INSTALLED
+1. Open your existing Shinobi place in Studio. STOP Play mode and SAVE your place first.
+2. Open Roblox/Download/ShinobiEmberLegacy-Installer.lua in Windows Notepad.
+3. Press Ctrl+A, then Ctrl+C to copy ALL of the code.
+4. In Studio, enable Command Bar from the View or Window menu.
+5. Click inside the Command Bar, paste all the code, and press Enter.
+6. Wait for the new village and success message, then press Play.
+
+The updater recognizes folders created by the earlier installer. It preserves your previous scripts and generated village, including edits, in ServerStorage/ShinobiBackup_<timestamp>. It does not merge manual source edits into the new scripts. If a conflicting folder is unrecognized, it stops before changing anything; use a new Baseplate or the supplied place file instead.
 
 CONTROLS
 WASD: Move
 Space: Jump
-Left click: Taijutsu
+Left click: Punch / punch / kick (click within 1.1 seconds to continue the combo)
 Z: Rasengan
 X: Fireball (level 2)
 C: Shadow Clone (level 3)
-Q: Dash
-R: Focus chakra
+Q: Dash; also cancels an unfinished attack
+R: Focus chakra while standing still
 E near Sensei: Accept or claim mission
+Shift: Toggle shoulder camera lock
+Hold Alt: Temporarily release a locked cursor to click menus
+Gamepad right stick click (R3), or the Camera Lock button: Toggle camera lock
 
-Studio training progress is temporary. The installed source and world remain when you save the place.
-Roblox Studio is required on a Windows or Mac computer; the Roblox mobile player cannot run this installer.
+Studio training progress is temporary. Your installed code and map are kept when you save the place. Public Roblox publishing is a separate step.
+
+Automated build and simulated-service checks have been run in the cloud. Actual animation rendering, camera feel, multiplayer replication and physics still need a Roblox Studio playtest on your Windows computer. Check R6 and R15 avatars and the camera after death/respawn.
