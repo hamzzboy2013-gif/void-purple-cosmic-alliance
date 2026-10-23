@@ -1,0 +1,29 @@
+SHINOBI: EMBER LEGACY — OPEN AND RUN IN ROBLOX STUDIO
+
+1. Download ShinobiEmberLegacy-Installer.lua to your computer.
+2. Open that file in a text editor: Notepad on Windows, or TextEdit/VS Code on macOS.
+   If double-clicking does not work, right-click it and choose Open With, then your text editor.
+3. Select all the code (Ctrl+A on Windows, Command+A on macOS), then copy it (Ctrl+C / Command+C).
+4. Open Roblox Studio on Windows or macOS and create a NEW Baseplate.
+5. While in Edit mode, show the Command Bar. Look for Command Bar in Studio's View or Window menu, depending on your Studio version.
+6. Click inside the Command Bar at the bottom of Studio, paste ALL the copied code, and press Enter.
+7. Wait for the village to appear. The installer prints a success message in Output.
+8. Press Play (the triangle button). Dismiss the welcome card and walk to Sensei to begin.
+9. Stop the playtest, then use File > Save to File (or Save to File As) to keep your installed place. Publishing to Roblox is a separate step.
+
+This file is an INSTALLER for the Command Bar. Opening it in a text editor only shows the code; the code runs after you paste it into Studio's Command Bar.
+Run the installer once in a new place. Stop Play mode before installing. If it reports that Shinobi is already installed, press Play in that place, or open a new Baseplate for another copy.
+
+CONTROLS
+WASD: Move
+Space: Jump
+Left click: Taijutsu
+Z: Rasengan
+X: Fireball (level 2)
+C: Shadow Clone (level 3)
+Q: Dash
+R: Focus chakra
+E near Sensei: Accept or claim mission
+
+Studio training progress is temporary. The installed source and world remain when you save the place.
+Roblox Studio is required on a Windows or Mac computer; the Roblox mobile player cannot run this installer.
